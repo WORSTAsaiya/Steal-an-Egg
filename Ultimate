@@ -42,6 +42,9 @@ local WEBHOOKS = {
 
     -- COMBINED channel: gets a copy of EVERY alert (all tiers + Butterfly + Racing).
     -- Copies are sent WITHOUT role pings so nobody is pinged twice. Leave "" to turn off.
+    -- DEBUG channel: duplicate-alert diagnostics (see S.DEBUG_WEBHOOK). Leave "" to turn off.
+    Debug     = "https://discord.com/api/webhooks/1558747004627320882/Ul5HnfO9g7v0hxxCdZFfu6X_jrplGAe6kx64HvvK4K_W1xMccyMiGwmbt_jEGnBjeVbQ",
+
     All       = "https://discord.com/api/webhooks/1556086398136746057/lX4lKeT5phqA0Ve7e4ctIpEHQAQya1zgUmNjMkXdJdHmnpb4A6lTiBonN_txMpxJkQOG",
 }
 
@@ -132,6 +135,7 @@ local S = {
 
     -- ----- debug -----
     DEBUG_PRINT = false,  -- print every egg's raw category / resolved name
+    DEBUG_WEBHOOK = true, -- send rare-egg alert diagnostics to WEBHOOKS.Debug
     TEST_MODE   = false,  -- send 3 sample egg alerts + 1 butterfly alert on start
 }
 
@@ -513,6 +517,38 @@ local function postWebhook(url, payload, retry)
     task.spawn(sendRequest, "POST", url, payload, retry and 4 or 1, not retry)
 end
 
+-- Debug log -> Discord (WEBHOOKS.Debug). Batched so it never floods / rate-limits.
+local DEBUG_JOB = tostring(game.JobId ~= "" and game.JobId or "studio"):sub(1, 8)
+local DEBUG_USER = (Players.LocalPlayer and Players.LocalPlayer.Name) or "?"
+local debugBuf, debugRunning = {}, false
+
+local function debugLog(msg)
+    if not S.DEBUG_WEBHOOK or not validUrl(WEBHOOKS.Debug) then return end
+    debugBuf[#debugBuf + 1] = string.format("`%s` <t:%d:T> [%s@%s] %s",
+        os.date("!%H:%M:%S"), os.time(), DEBUG_USER, DEBUG_JOB, tostring(msg))
+    if debugRunning then return end
+    debugRunning = true
+    task.spawn(function()
+        task.wait(1.5)
+        while #debugBuf > 0 do
+            local chunk = ""
+            while #debugBuf > 0 and #chunk + #debugBuf[1] + 1 < 1800 do
+                chunk = chunk .. table.remove(debugBuf, 1) .. "\n"
+            end
+            if chunk == "" then chunk = table.remove(debugBuf, 1):sub(1, 1800) end
+            sendRequest("POST", WEBHOOKS.Debug, {
+                username = "EGG DEBUG",
+                content = chunk,
+                allowed_mentions = { parse = {} },
+            }, 4, true)
+            task.wait(1)
+        end
+        debugRunning = false
+    end)
+end
+
+debugLog("script started")
+
 -- Copy of a "started ... ended" event message into the combined channel.
 -- Posts the start message, waits, then edits that same message (like the event channels do).
 -- getEditPayload is a function so the "ended" embed is built at edit time.
@@ -886,6 +922,8 @@ task.spawn(function()
     end
 end)
 
+local rareEverSeen  = {}   -- debug
+local rarePresent   = {}   -- debug: uid/name -> true while it was in the last scan
 local alerted       = {}   -- uid -> last time this egg was seen (os.clock)
 local alertedNoUid  = {}   -- egg name -> uid-less copies already alerted
 local firstRareScan = true
@@ -893,12 +931,14 @@ local firstRareScan = true
 local function checkRare(eggs)
     local now = os.clock()
     local noUidNow = {}
+    local presentNow = {}
 
     for _, e in ipairs(eggs) do
         local info = RARE_INFO[e.k] or RARE_INFO[e.nameKey] or RARE_INFO[e.catKey]
 
         if info then
             local isNew = false
+            presentNow[(e.uid ~= "") and e.uid or ("noUid:" .. info.name)] = info.name
 
             if e.uid ~= "" then
                 if alerted[e.uid] == nil then isNew = true end
@@ -924,11 +964,28 @@ local function checkRare(eggs)
                 }
 
                 print("[EGG] rare spotted:", info.name, "(" .. info.tier .. ")")
+                debugLog(string.format("**ALERT** %s (%s) uid=`%s` area=%s loc=%s hadUid=%s",
+                    info.name, info.tier, e.uid ~= "" and e.uid or "NONE",
+                    tostring(e.areaId), tostring(location), tostring(e.uid ~= "")))
             end
         end
     end
 
     firstRareScan = false
+
+    -- debug: log rare eggs that dropped out of the scan (flicker detector)
+    for key, name in pairs(rarePresent) do
+        if not presentNow[key] then
+            debugLog(string.format("VANISHED %s key=`%s`", tostring(name), tostring(key)))
+        end
+    end
+    for key, name in pairs(presentNow) do
+        if not rarePresent[key] and rareEverSeen[key] then
+            debugLog(string.format("REAPPEARED %s key=`%s`", tostring(name), tostring(key)))
+        end
+        rareEverSeen[key] = true
+    end
+    rarePresent = presentNow
 
     -- forget eggs that have been gone for a while
     for uid, seenAt in pairs(alerted) do
