@@ -1,4 +1,3 @@
-task.wait(10)
 -- WORST Server Notifiers
 -- ============================================================
 --  WORST • RARE EGG NOTIFIER + BOT FEED + BUTTERFLY + RACING
@@ -541,13 +540,14 @@ local function debugLog(msg)
                 username = "EGG DEBUG",
                 content = chunk,
                 allowed_mentions = { parse = {} },
-            }, 4, true)
+            }, 4, false)
             task.wait(1)
         end
         debugRunning = false
     end)
 end
 
+print("[EGG DEBUG] debug webhook " .. ((S.DEBUG_WEBHOOK and validUrl(WEBHOOKS.Debug)) and "ENABLED" or "OFF") .. " (job " .. DEBUG_JOB .. ")")
 debugLog("script started")
 
 -- Copy of a "started ... ended" event message into the combined channel.
@@ -1627,6 +1627,7 @@ if S.HALLOWEEN_ENABLED then
         end
 
         local seenH, reportedH = {}, {}   -- uid -> last seen, unidentified-egg log guard
+        local hPresent, hEver = {}, {}    -- debug
         local firstScan = true
 
         while true do
@@ -1636,6 +1637,7 @@ if S.HALLOWEEN_ENABLED then
                 if not folder then return end
 
                 local now = os.clock()
+                local hNow = {}
 
                 for _, m in ipairs(folder:GetChildren()) do
                     local zone = tonumber(m:GetAttribute("Zone")) or 0
@@ -1650,6 +1652,7 @@ if S.HALLOWEEN_ENABLED then
                             local uid = tostring(m:GetAttribute("HalloweenEggUid") or m:GetFullName())
                             local isNew = seenH[uid] == nil
                             seenH[uid] = now
+                            hNow[uid] = eggKey
 
                             if isNew and (S.ALERT_EXISTING_ON_START or not firstScan) then
                                 alertQueue[#alertQueue + 1] = {
@@ -1658,6 +1661,9 @@ if S.HALLOWEEN_ENABLED then
                                     location = ZONE_NAMES[zone] or "Halloween Dimension",
                                 }
                                 print("[HALLOWEEN] rare spotted:", eggKey, "(" .. info.tier .. ")", "zone", zone)
+                                debugLog(string.format("**HALLOWEEN ALERT** %s (%s) uid=`%s` zone=%s src=%s",
+                                    eggKey, info.tier, uid, tostring(zone),
+                                    tostring(m:GetAttribute("PreparedSourceName") or m:GetAttribute("SourceName") or m.Name)))
                             end
                         elseif S.DEBUG_PRINT then
                             local key = m:GetFullName() .. tostring(m:GetAttribute("HalloweenEggUid"))
@@ -1672,6 +1678,15 @@ if S.HALLOWEEN_ENABLED then
                 end
 
                 firstScan = false
+
+                for uid, name in pairs(hPresent) do
+                    if not hNow[uid] then debugLog("HALLOWEEN VANISHED " .. name .. " uid=`" .. uid .. "`") end
+                end
+                for uid, name in pairs(hNow) do
+                    if not hPresent[uid] and hEver[uid] then debugLog("HALLOWEEN REAPPEARED " .. name .. " uid=`" .. uid .. "`") end
+                    hEver[uid] = true
+                end
+                hPresent = hNow
 
                 -- forget eggs that have been gone for a while
                 for uid, seenAt in pairs(seenH) do
