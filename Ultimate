@@ -23,6 +23,24 @@
 
 
 -- ============================================================
+-- SINGLE INSTANCE
+-- Re-executing the script stops the previous copy (its loops exit and it can
+-- no longer send anything), and alert memory survives the re-execute, so
+-- eggs that were already alerted are NOT alerted again.
+-- ============================================================
+
+local ENV = (getgenv and getgenv()) or _G
+local hadPreviousRun = ENV.WORST_RUN ~= nil
+local RUN_ID = {}
+ENV.WORST_RUN = RUN_ID
+ENV.WORST_ALERTED     = ENV.WORST_ALERTED     or {}   -- uid -> last seen
+ENV.WORST_ALERTED_NU  = ENV.WORST_ALERTED_NU  or {}   -- name -> uid-less copies alerted
+ENV.WORST_SEEN_H      = ENV.WORST_SEEN_H      or {}   -- halloween uid -> last seen
+
+local function alive() return ENV.WORST_RUN == RUN_ID end
+
+
+-- ============================================================
 -- 1. WEBHOOKS
 -- Paste your webhook URLs here. Nothing else in the script has one.
 -- ============================================================
@@ -473,6 +491,7 @@ end
 -- JSON request with automatic retry when Discord says "rate limited" (429).
 -- Returns the response on success (2xx), nil otherwise.
 local function sendRequest(method, url, body, attempts, quiet)
+    if not alive() then return nil end
     if not httpRequest then
         if not quiet then warn("[EGG] No HTTP request function found in this executor.") end
         return nil
@@ -548,7 +567,7 @@ local function debugLog(msg)
 end
 
 print("[EGG DEBUG] debug webhook " .. ((S.DEBUG_WEBHOOK and validUrl(WEBHOOKS.Debug)) and "ENABLED" or "OFF") .. " (job " .. DEBUG_JOB .. ")")
-debugLog("script started")
+debugLog(hadPreviousRun and "script started (REPLACED a previous instance)" or "script started")
 
 -- Copy of a "started ... ended" event message into the combined channel.
 -- Posts the start message, waits, then edits that same message (like the event channels do).
@@ -573,6 +592,7 @@ end
 -- Send an alert to your website.
 local warnedKey = false
 local function pushSite(payload)
+    if not alive() then return end
     if not httpRequest or SITE.URL == "" then return end
 
     if SITE.KEY == "PUT-YOUR-FEED_KEY-HERE" then
@@ -912,7 +932,7 @@ end
 local alertQueue = {}
 
 task.spawn(function()
-    while true do
+    while alive() do
         local a = table.remove(alertQueue, 1)
         if a then
             pcall(sendEggEmbed, a.name, a.tier, a.location)
@@ -925,8 +945,8 @@ end)
 
 local rareEverSeen  = {}   -- debug
 local rarePresent   = {}   -- debug: uid/name -> true while it was in the last scan
-local alerted       = {}   -- uid -> last time this egg was seen (os.clock)
-local alertedNoUid  = {}   -- egg name -> uid-less copies already alerted
+local alerted       = ENV.WORST_ALERTED      -- uid -> last time this egg was seen (os.clock)
+local alertedNoUid  = ENV.WORST_ALERTED_NU   -- egg name -> uid-less copies already alerted
 local firstRareScan = true
 
 local function checkRare(eggs)
@@ -1131,7 +1151,7 @@ task.spawn(function()
     -- new-cycle detector (for the countdown)
     local refIds, refAt, rerollAt = nil, 0, nil
 
-    while true do
+    while alive() do
         pcall(function()
             local live, ids, ok, eggs = buildSnapshot()
             if not ok then return end
@@ -1541,7 +1561,7 @@ do
     task.spawn(function()
         local wasRaceOpen = false
 
-        while true do
+        while alive() do
             local ok, timerText = pcall(readTimerText)
 
             -- a temporarily missing GUI/text should not re-arm the alert
@@ -1626,11 +1646,11 @@ if S.HALLOWEEN_ENABLED then
             return nil
         end
 
-        local seenH, reportedH = {}, {}   -- uid -> last seen, unidentified-egg log guard
+        local seenH, reportedH = ENV.WORST_SEEN_H, {}   -- uid -> last seen, unidentified-egg log guard
         local hPresent, hEver = {}, {}    -- debug
         local firstScan = true
 
-        while true do
+        while alive() do
             pcall(function()
                 local dim    = workspace:FindFirstChild("HalloweenDimension")
                 local folder = dim and dim:FindFirstChild("WorldEggs")
