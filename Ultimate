@@ -102,7 +102,7 @@ local SITE = {
 
 local BOT = {
     NAME   = "WORST • Steal An Egg",
-    AVATAR = "https://github.com/Asaiya2/steal-an-egg/blob/main/neW.png?raw=true",
+    AVATAR = "https://t3.ftcdn.net/jpg/03/56/50/38/360_F_356503809_vas1u5ohd44mvLFSaNfUthgpWCTJNCD9.jpg",
     FOOTER = "https://discord.gg/W0RST",
 }
 
